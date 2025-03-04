@@ -15,6 +15,7 @@ def get_postage_contract_address():
         # Query the Bee node's /info endpoint to get the PostageStamp contract address
         response = requests.get(f"{BEE_API_URL}?getprice")
         response.raise_for_status()
+        return 0
         
         # Parse the response JSON to extract the contract address
         data = response.json()

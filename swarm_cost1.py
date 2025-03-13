@@ -3,7 +3,6 @@ import json
 import os
 import math
 
-
 def is_connected_to_dappnode():
     url = 'http://bee.swarm.public.dappnode:1633/health'
     try:
@@ -11,10 +10,12 @@ def is_connected_to_dappnode():
         if response.status_code == 200:
             print("Connected to DAppNode Bee node.")
             return True
+        else:
+            print("Failed to connect to Bee node. Status code:", response.status_code)
+            return False
     except requests.ConnectionError:
+        print("Failed to connect to Bee node. Connection error.")
         return False
-    return False
-
 
 def get_existing_stamps(base_url):
     try:
@@ -29,7 +30,6 @@ def get_existing_stamps(base_url):
             return []
     except requests.RequestException:
         return []
-
 
 def select_stamp(existing_stamps):
     if not existing_stamps:
@@ -47,28 +47,43 @@ def select_stamp(existing_stamps):
     else:
         return None
 
-
 def calculate_required_depth(file_size):
-    base_depth = 17  # Minimum depth for smaller files
-    max_volume = 1024 * 1024 * 1024 * 1024  # 1 TB in bytes
+    max_volumes = {i: 2 ** (i + 15) for i in range(17, 32)}  # Depths 17 to 31
 
-    if file_size >= max_volume:
-        return base_depth
+    for depth, max_volume in max_volumes.items():
+        if file_size <= max_volume:
+            return depth
 
-    proportion = file_size / max_volume
-    required_depth = math.floor(base_depth + math.log2(proportion))
+    return max(max_volumes.keys())  # If file is larger than all defined volumes, use the largest depth
 
-    return max(base_depth, required_depth)
+def calculate_required_plur(file_size, depth):
+    price_per_chunk_in_xbzz = 4.1245e-12  # Example value
+    max_volume = 2 ** depth
+    required_chunks = math.ceil(file_size / max_volume)
+    required_plur = required_chunks / price_per_chunk_in_xbzz
 
+    total_xbzz = required_plur * price_per_chunk_in_xbzz * 1e-18
+    print(f"Price per chunk in xBZZ: {price_per_chunk_in_xbzz}")
+    print(f"Total xBZZ required: {total_xbzz}")
+
+    return int(required_plur)
 
 def purchase_stamp(base_url, file_size):
-    required_depth = calculate_required_depth(file_size)
-    print(f"Calculated required depth for your file: {required_depth}")
+    depth = calculate_required_depth(file_size)
+    plur_amount = calculate_required_plur(file_size, depth)
+
+    print(f"\nCalculated required depth for your file: {depth}")
+    print(f"Calculated required PLUR amount: {plur_amount}")
+
+    confirm = input("Do you want to proceed with purchasing this stamp? (yes/no): ").strip().lower()
+    if confirm != 'yes':
+        print("Stamp purchase cancelled.")
+        return None
 
     label = input("Enter a label for the new stamp: ").strip()
 
     try:
-        response = requests.post(f'{base_url}/stamps', json={"depth": required_depth, "label": label})
+        response = requests.post(f'{base_url}/stamps', json={"amount": str(plur_amount), "depth": depth, "label": label})
         if response.status_code == 201:
             stamp_id = response.json().get('batchID')
             print(f"Stamp successfully purchased. Stamp ID: {stamp_id}")
@@ -79,7 +94,6 @@ def purchase_stamp(base_url, file_size):
     except requests.RequestException as e:
         print(f"Error purchasing stamp: {e}")
         return None
-
 
 def upload_file(base_url, file_path, stamp_id, is_immutable):
     if stamp_id is None:
@@ -98,11 +112,13 @@ def upload_file(base_url, file_path, stamp_id, is_immutable):
     else:
         raise Exception(f"File upload failed with status code {response.status_code}: {response.text}")
 
-
 def main():
     base_url = 'http://localhost:1633'
     if is_connected_to_dappnode():
         base_url = 'http://bee.swarm.public.dappnode:1633'
+    else:
+        print("Error: Could not connect to Bee node. Exiting.")
+        return
 
     existing_stamps = get_existing_stamps(base_url)
     stamp_id = select_stamp(existing_stamps)
@@ -113,12 +129,14 @@ def main():
             return
 
         file_path = input("Enter the path to the file you want to upload: ").strip()
+
         if not os.path.exists(file_path):
             print("Invalid file path. Exiting.")
             return
 
         file_size = os.path.getsize(file_path)
         stamp_id = purchase_stamp(base_url, file_size)
+
         if not stamp_id:
             print("Failed to obtain a valid stamp ID. Exiting.")
             return

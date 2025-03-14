@@ -2,6 +2,28 @@ import requests
 import json
 import os
 import math
+from web3 import Web3
+
+# Connect to Ethereum Bee Node
+BEE_API_URL = "http://nethermind-xdai.dappnode:8545"
+web3 = Web3(Web3.HTTPProvider(BEE_API_URL))
+
+POSTAGE_CONTRACT_ADDRESS = "0x45a1502382541Cd610CC9068e88727426b696293"
+POSTAGE_CONTRACT_ABI = [
+    {"inputs": [], "name": "lastPrice", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}
+]
+
+PLUR_PER_xBZZ = 10**16  # Conversion factor
+CHUNK_SIZE_KB = 4.096  # Chunk size in KB
+BLOCKS_PER_YEAR = 6_307_200  # Assuming 5s per block, 1 year
+
+# Correct max volume per depth based on Swarm Docs
+MAX_VOLUMES_MB = {
+    17: 536.87, 18: 1073.74, 19: 2147.48, 20: 4294.97,
+    21: 8589.93, 22: 17179.87, 23: 34359.74, 24: 68719.48,
+    25: 137438.95, 26: 274877.91, 27: 549755.81, 28: 1099511.63,
+    29: 2199023.26, 30: 4398046.51, 31: 8796093.02
+}
 
 def is_connected_to_dappnode():
     url = 'http://bee.swarm.public.dappnode:1633/health'
@@ -21,96 +43,47 @@ def get_existing_stamps(base_url):
     try:
         response = requests.get(f'{base_url}/stamps')
         if response.status_code == 200:
-            stamps = response.json().get('stamps', [])
-            if isinstance(stamps, list):
-                return stamps
-            else:
-                return []
+            return response.json().get('stamps', [])
         else:
+            print("Failed to fetch existing stamps. Status code:", response.status_code)
             return []
     except requests.RequestException:
+        print("Error fetching existing stamps.")
         return []
 
-def select_stamp(existing_stamps):
-    if not existing_stamps:
-        return None
-
-    print("\nExisting Stamps:")
-    for stamp in existing_stamps:
-        print(f"Stamp ID: {stamp['batchID']} - Usable: {stamp['usable']} - Label: {stamp.get('label', 'N/A')}")
-
-    choice = input("Do you want to use an existing stamp? (yes/no): ").strip().lower()
-
-    if choice == 'yes':
-        stamp_id = input("Enter the Stamp ID you want to use: ").strip()
-        return stamp_id
-    else:
+def get_price_per_block():
+    """Fetch the latest price per block from the Postage contract."""
+    try:
+        contract = web3.eth.contract(address=POSTAGE_CONTRACT_ADDRESS, abi=POSTAGE_CONTRACT_ABI)
+        return contract.functions.lastPrice().call()
+    except Exception as e:
+        print(f"Error fetching price per block from contract: {e}")
         return None
 
 def calculate_required_depth(file_size):
-    max_volumes = {i: 2 ** (i + 15) for i in range(17, 32)}  # Depths 17 to 31
-
-    for depth, max_volume in max_volumes.items():
-        if file_size <= max_volume:
+    """Determine the depth required for the file."""
+    for depth, max_volume in MAX_VOLUMES_MB.items():
+        if file_size <= max_volume * 1024 * 1024:
             return depth
+    return max(MAX_VOLUMES_MB.keys())
 
-    return max(max_volumes.keys())  # If file is larger than all defined volumes, use the largest depth
+def calculate_required_plur(depth, price_per_block):
+    """Calculate required PLUR and xBZZ cost based on full depth."""
+    max_volume = MAX_VOLUMES_MB[depth] * 1024 * 1024  # Convert MB to Bytes
+    num_chunks = math.ceil(max_volume / (CHUNK_SIZE_KB * 1024))  # Convert to chunks
 
-def calculate_required_plur(file_size, depth):
-    price_per_chunk_in_xbzz = 4.1245e-12  # Example value
-    max_volume = 2 ** depth
-    required_chunks = math.ceil(file_size / max_volume)
-    required_plur = required_chunks / price_per_chunk_in_xbzz
+    required_plur = price_per_block * BLOCKS_PER_YEAR  # Correct PLUR required for 1 year
+    total_xbzz = required_plur / PLUR_PER_xBZZ  # Convert to xBZZ
 
-    total_xbzz = required_plur * price_per_chunk_in_xbzz * 1e-18
-    print(f"Price per chunk in xBZZ: {price_per_chunk_in_xbzz}")
-    print(f"Total xBZZ required: {total_xbzz}")
-
-    return int(required_plur)
-
-def purchase_stamp(base_url, file_size):
-    depth = calculate_required_depth(file_size)
-    plur_amount = calculate_required_plur(file_size, depth)
-
-    print(f"\nCalculated required depth for your file: {depth}")
-    print(f"Calculated required PLUR amount: {plur_amount}")
-
-    confirm = input("Do you want to proceed with purchasing this stamp? (yes/no): ").strip().lower()
-    if confirm != 'yes':
-        print("Stamp purchase cancelled.")
-        return None
-
-    label = input("Enter a label for the new stamp: ").strip()
-
-    try:
-        response = requests.post(f'{base_url}/stamps', json={"amount": str(plur_amount), "depth": depth, "label": label})
-        if response.status_code == 201:
-            stamp_id = response.json().get('batchID')
-            print(f"Stamp successfully purchased. Stamp ID: {stamp_id}")
-            return stamp_id
-        else:
-            print(f"Failed to purchase stamp. Status code: {response.status_code}, Message: {response.text}")
-            return None
-    except requests.RequestException as e:
-        print(f"Error purchasing stamp: {e}")
-        return None
-
-def upload_file(base_url, file_path, stamp_id, is_immutable):
-    if stamp_id is None:
-        raise Exception("No valid stamp ID provided for file upload.")
-
-    with open(file_path, 'rb') as f:
-        headers = {'swarm-postage-batch-id': stamp_id}
-
-        if not is_immutable:
-            headers['swarm-immutable'] = 'false'
-
-        response = requests.post(f'{base_url}/bzz', files={'file': f}, headers=headers)
-
-    if response.status_code == 201:
-        return response.json().get('reference')
-    else:
-        raise Exception(f"File upload failed with status code {response.status_code}: {response.text}")
+    print(f"\nDepth: {depth}")
+    print(f"Max volume for depth: {MAX_VOLUMES_MB[depth]} MB")
+    print(f"Chunk size: {CHUNK_SIZE_KB} KB")
+    print(f"Number of chunks: {num_chunks}")
+    print(f"Price per block in PLUR: {price_per_block}")
+    print(f"Total PLUR required: {required_plur}")
+    print(f"Total xBZZ required: {total_xbzz:.6f}")
+    
+    return required_plur
 
 def main():
     base_url = 'http://localhost:1633'
@@ -120,35 +93,57 @@ def main():
         print("Error: Could not connect to Bee node. Exiting.")
         return
 
+    price_per_block = get_price_per_block()
+    if price_per_block is None:
+        print("Error: Could not retrieve the price per block. Exiting.")
+        return
+
     existing_stamps = get_existing_stamps(base_url)
-    stamp_id = select_stamp(existing_stamps)
+    if existing_stamps:
+        print("\nExisting Stamps:")
+        for stamp in existing_stamps:
+            ttl_days = stamp.get('batchTTL', 0) / (24 * 3600)
+            print(f"Stamp ID: {stamp['batchID']} - Usable: {stamp['usable']} - Label: {stamp.get('label', 'N/A')} - TTL: {ttl_days:.2f} days")
 
-    if not stamp_id:
-        if input("No existing stamps selected. Do you want to purchase a new stamp? (yes/no): ").strip().lower() != 'yes':
-            print("Exiting.")
-            return
+        use_existing = input("Do you want to use an existing stamp? (yes/no): ").strip().lower()
+        if use_existing == 'yes':
+            return  # Exit as user selected existing stamp
 
-        file_path = input("Enter the path to the file you want to upload: ").strip()
+    buy_new_stamp = input("Do you want to purchase a new stamp? (yes/no): ").strip().lower()
+    if buy_new_stamp != 'yes':
+        print("Exiting.")
+        return
 
-        if not os.path.exists(file_path):
-            print("Invalid file path. Exiting.")
-            return
-
-        file_size = os.path.getsize(file_path)
-        stamp_id = purchase_stamp(base_url, file_size)
-
-        if not stamp_id:
-            print("Failed to obtain a valid stamp ID. Exiting.")
-            return
-
-    is_immutable = input("Do you want the file to be immutable? (yes/no): ").strip().lower() == 'yes'
-
+    file_path = input("Enter the path to the file you want to upload: ").strip()
+    
+    if not os.path.exists(file_path):
+        print("Invalid file path. Exiting.")
+        return
+    
+    file_size = os.path.getsize(file_path)
+    depth = calculate_required_depth(file_size)
+    required_plur = calculate_required_plur(depth, price_per_block)
+    
+    print(f"\nCalculated required depth for your file: {depth}")
+    print(f"Calculated required PLUR amount: {required_plur}")
+    
+    confirm = input("Do you want to proceed with purchasing this stamp? (yes/no): ").strip().lower()
+    if confirm != 'yes':
+        print("Stamp purchase cancelled.")
+        return
+    
+    label = input("Enter a label for the new stamp: ").strip()
     try:
-        swarm_hash = upload_file(base_url, file_path, stamp_id, is_immutable)
-        print(f"File successfully uploaded! Swarm hash: {swarm_hash}")
-    except Exception as e:
-        print(e)
-
+        response = requests.post(f'{base_url}/stamps', json={"amount": str(required_plur), "depth": depth, "label": label})
+        if response.status_code == 201:
+            stamp_id = response.json().get('batchID')
+            print(f"Stamp successfully purchased. Stamp ID: {stamp_id}")
+        else:
+            print(f"Failed to purchase stamp. Status code: {response.status_code}, Message: {response.text}")
+    except requests.RequestException as e:
+        print(f"Error purchasing stamp: {e}")
+    
+    print("Process completed successfully.")
 
 if __name__ == "__main__":
     main()

@@ -60,6 +60,22 @@ def get_price_per_block():
         print(f"Error fetching price per block from contract: {e}")
         return None
 
+def get_wallet_balance(base_url):
+    """Fetch the wallet's actual xBZZ balance from the Bee node."""
+    try:
+        response = requests.get(f'{base_url}/wallet')
+        if response.status_code == 200:
+            balance_data = response.json()
+            balance_plur = int(balance_data.get('bzzBalance', 0))  # Get balance in PLUR
+            balance_xbzz = balance_plur / PLUR_PER_xBZZ  # Convert to xBZZ
+            return balance_xbzz
+        else:
+            print("Failed to fetch wallet balance. Status code:", response.status_code)
+            return None
+    except requests.RequestException:
+        print("Error fetching wallet balance.")
+        return None
+
 def calculate_required_depth(file_size):
     """Determine the depth required for the file."""
     for depth, max_volume in MAX_VOLUMES_MB.items():
@@ -124,27 +140,13 @@ def main():
     file_size = os.path.getsize(file_path)
     depth = calculate_required_depth(file_size)
     required_plur = calculate_required_plur(depth, price_per_block)
-    
-    print(f"\nCalculated required depth for your file: {depth}")
-    print(f"Calculated required PLUR amount: {required_plur:.2f}")
+    wallet_balance = get_wallet_balance(base_url) or 0.0  # Default to 0 if None
+    print(f"\nYour xBZZ Balance: {wallet_balance:.6f} xBZZ")
     
     confirm = input("Do you want to proceed with purchasing this stamp? (yes/no): ").strip().lower()
     if confirm != 'yes':
         print("Stamp purchase cancelled.")
         return
-    
-    label = input("Enter a label for the new stamp: ").strip()
-    try:
-        response = requests.post(f'{base_url}/stamps', json={"amount": str(required_plur), "depth": depth, "label": label})
-        if response.status_code == 201:
-            stamp_id = response.json().get('batchID')
-            print(f"Stamp successfully purchased. Stamp ID: {stamp_id}")
-        else:
-            print(f"Failed to purchase stamp. Status code: {response.status_code}, Message: {response.text}")
-    except requests.RequestException as e:
-        print(f"Error purchasing stamp: {e}")
-    
-    print("Process completed successfully.")
 
 if __name__ == "__main__":
     main()

@@ -72,7 +72,8 @@ def calculate_required_plur(depth, price_per_block):
     max_volume = MAX_VOLUMES_MB[depth] * 1024 * 1024  # Convert MB to Bytes
     num_chunks = math.ceil(max_volume / (CHUNK_SIZE_KB * 1024))  # Convert to chunks
 
-    required_plur = price_per_block * BLOCKS_PER_YEAR  # Correct PLUR required for 1 year
+    # Adjust calculation to match Swarm pricing structure
+    required_plur = price_per_block * num_chunks * BLOCKS_PER_YEAR  # PLUR required for 1 year
     total_xbzz = required_plur / PLUR_PER_xBZZ  # Convert to xBZZ
 
     print(f"\nDepth: {depth}")
@@ -80,7 +81,7 @@ def calculate_required_plur(depth, price_per_block):
     print(f"Chunk size: {CHUNK_SIZE_KB} KB")
     print(f"Number of chunks: {num_chunks}")
     print(f"Price per block in PLUR: {price_per_block}")
-    print(f"Total PLUR required: {required_plur}")
+    print(f"Total PLUR required: {required_plur:.2f}")
     print(f"Total xBZZ required: {total_xbzz:.6f}")
     
     return required_plur
@@ -125,7 +126,7 @@ def main():
     required_plur = calculate_required_plur(depth, price_per_block)
     
     print(f"\nCalculated required depth for your file: {depth}")
-    print(f"Calculated required PLUR amount: {required_plur}")
+    print(f"Calculated required PLUR amount: {required_plur:.2f}")
     
     confirm = input("Do you want to proceed with purchasing this stamp? (yes/no): ").strip().lower()
     if confirm != 'yes':

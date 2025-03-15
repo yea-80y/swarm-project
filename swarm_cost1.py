@@ -2,7 +2,12 @@ import requests
 import json
 import os
 import math
+import mimetypes
 from web3 import Web3
+from decimal import Decimal, getcontext
+
+# Set higher precision for decimal calculations
+getcontext().prec = 20
 
 # Connect to Ethereum Bee Node
 BEE_API_URL = "http://nethermind-xdai.dappnode:8545"
@@ -13,17 +18,9 @@ POSTAGE_CONTRACT_ABI = [
     {"inputs": [], "name": "lastPrice", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}
 ]
 
-PLUR_PER_xBZZ = 10**16  # Conversion factor
-CHUNK_SIZE_KB = 4.096  # Chunk size in KB
-BLOCKS_PER_YEAR = 6_307_200  # Assuming 5s per block, 1 year
-
-# Correct max volume per depth based on Swarm Docs
-MAX_VOLUMES_MB = {
-    17: 536.87, 18: 1073.74, 19: 2147.48, 20: 4294.97,
-    21: 8589.93, 22: 17179.87, 23: 34359.74, 24: 68719.48,
-    25: 137438.95, 26: 274877.91, 27: 549755.81, 28: 1099511.63,
-    29: 2199023.26, 30: 4398046.51, 31: 8796093.02
-}
+PLUR_PER_xBZZ = Decimal(10**16)  # Conversion factor
+CHUNK_SIZE_BYTES = Decimal(4096)  # Chunk size in Bytes
+BLOCKS_PER_YEAR = Decimal(6_307_200)  # Assuming 5s per block, 1 year
 
 def is_connected_to_dappnode():
     url = 'http://bee.swarm.public.dappnode:1633/health'
@@ -52,22 +49,20 @@ def get_existing_stamps(base_url):
         return []
 
 def get_price_per_block():
-    """Fetch the latest price per block from the Postage contract."""
     try:
         contract = web3.eth.contract(address=POSTAGE_CONTRACT_ADDRESS, abi=POSTAGE_CONTRACT_ABI)
-        return contract.functions.lastPrice().call()
+        return Decimal(contract.functions.lastPrice().call())
     except Exception as e:
         print(f"Error fetching price per block from contract: {e}")
         return None
 
 def get_wallet_balance(base_url):
-    """Fetch the wallet's actual xBZZ balance from the Bee node."""
     try:
         response = requests.get(f'{base_url}/wallet')
         if response.status_code == 200:
             balance_data = response.json()
-            balance_plur = int(balance_data.get('bzzBalance', 0))  # Get balance in PLUR
-            balance_xbzz = balance_plur / PLUR_PER_xBZZ  # Convert to xBZZ
+            balance_plur = Decimal(balance_data.get('bzzBalance', 0))
+            balance_xbzz = balance_plur / PLUR_PER_xBZZ
             return balance_xbzz
         else:
             print("Failed to fetch wallet balance. Status code:", response.status_code)
@@ -77,44 +72,56 @@ def get_wallet_balance(base_url):
         return None
 
 def calculate_required_depth(file_size):
-    """Determine the depth required for the file."""
-    for depth, max_volume in MAX_VOLUMES_MB.items():
-        if file_size <= max_volume * 1024 * 1024:
+    for depth in range(17, 32):
+        max_volume_bytes = (Decimal(2) ** Decimal(depth)) * CHUNK_SIZE_BYTES
+        if file_size <= max_volume_bytes:
             return depth
-    return max(MAX_VOLUMES_MB.keys())
+    return 31  # Default to the highest depth
 
 def calculate_required_plur(depth, price_per_block):
-    """Calculate required PLUR and xBZZ cost based on full depth."""
-    max_volume = MAX_VOLUMES_MB[depth] * 1024 * 1024  # Convert MB to Bytes
-    num_chunks = math.ceil(max_volume / (CHUNK_SIZE_KB * 1024))  # Convert to chunks
-
-    # Adjust calculation to match Swarm pricing structure
-    required_plur = price_per_block * num_chunks * BLOCKS_PER_YEAR  # PLUR required for 1 year
-    total_xbzz = required_plur / PLUR_PER_xBZZ  # Convert to xBZZ
+    depth = Decimal(depth)
+    max_volume_bytes = (Decimal(2) ** depth) * CHUNK_SIZE_BYTES
+    max_volume_mb = max_volume_bytes / (Decimal(1024) * Decimal(1024))
+    num_chunks = max_volume_bytes / CHUNK_SIZE_BYTES
+    required_plur = price_per_block * BLOCKS_PER_YEAR  # PLUR required per year per chunk
+    total_plur = required_plur * num_chunks  # Total required PLUR
+    total_xbzz = total_plur / PLUR_PER_xBZZ
 
     print(f"\nDepth: {depth}")
-    print(f"Max volume for depth: {MAX_VOLUMES_MB[depth]} MB")
-    print(f"Chunk size: {CHUNK_SIZE_KB} KB")
-    print(f"Number of chunks: {num_chunks}")
+    print(f"Max volume for depth: {max_volume_mb:.6f} MB")
+    print(f"Chunk size: {CHUNK_SIZE_BYTES} Bytes")
+    print(f"Number of chunks: {int(num_chunks)}")
     print(f"Price per block in PLUR: {price_per_block}")
-    print(f"Total PLUR required: {required_plur:.2f}")
+    print(f"Total PLUR required: {total_plur:.6f}")
     print(f"Total xBZZ required: {total_xbzz:.6f}")
     
-    return required_plur
+    return total_plur
+
+def purchase_stamp(base_url, amount, depth, immutable, label):
+    headers = {"immutable": "true" if immutable else "false"}
+    url = f"{base_url}/stamps/{amount}/{depth}"
+    try:
+        response = requests.post(url, headers=headers)
+        if response.status_code == 201:
+            batch_id = response.json().get("batchID")
+            print(f"Stamp successfully purchased. Batch ID: {batch_id}")
+            return batch_id
+        else:
+            print(f"Failed to purchase stamp. Status code: {response.status_code}, Message: {response.text}")
+            return None
+    except requests.RequestException as e:
+        print(f"Error purchasing stamp: {e}")
+        return None
 
 def main():
-    base_url = 'http://localhost:1633'
-    if is_connected_to_dappnode():
-        base_url = 'http://bee.swarm.public.dappnode:1633'
-    else:
+    base_url = 'http://bee.swarm.public.dappnode:1633'
+    if not is_connected_to_dappnode():
         print("Error: Could not connect to Bee node. Exiting.")
         return
 
-    price_per_block = get_price_per_block()
-    if price_per_block is None:
-        print("Error: Could not retrieve the price per block. Exiting.")
-        return
-
+    wallet_balance = get_wallet_balance(base_url) or Decimal(0.0)
+    print(f"\nYour xBZZ Balance: {wallet_balance:.6f} xBZZ")
+    
     existing_stamps = get_existing_stamps(base_url)
     if existing_stamps:
         print("\nExisting Stamps:")
@@ -124,28 +131,26 @@ def main():
 
         use_existing = input("Do you want to use an existing stamp? (yes/no): ").strip().lower()
         if use_existing == 'yes':
-            return  # Exit as user selected existing stamp
-
-    buy_new_stamp = input("Do you want to purchase a new stamp? (yes/no): ").strip().lower()
-    if buy_new_stamp != 'yes':
-        print("Exiting.")
-        return
-
-    file_path = input("Enter the path to the file you want to upload: ").strip()
+            return
     
+    file_path = input("Enter the path to the file you want to upload: ").strip()
     if not os.path.exists(file_path):
         print("Invalid file path. Exiting.")
         return
     
     file_size = os.path.getsize(file_path)
     depth = calculate_required_depth(file_size)
+    price_per_block = get_price_per_block()
     required_plur = calculate_required_plur(depth, price_per_block)
-    wallet_balance = get_wallet_balance(base_url) or 0.0  # Default to 0 if None
-    print(f"\nYour xBZZ Balance: {wallet_balance:.6f} xBZZ")
     
-    confirm = input("Do you want to proceed with purchasing this stamp? (yes/no): ").strip().lower()
-    if confirm != 'yes':
-        print("Stamp purchase cancelled.")
+    content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+    print(f"Detected Content-Type: {content_type}")
+    
+    should_be_mutable = input("Should the file be mutable? (yes/no): ").strip().lower() == 'yes'
+    label = input("Enter a label for the new stamp: ").strip()
+    batch_id = purchase_stamp(base_url, required_plur, depth, not should_be_mutable, label)
+    if not batch_id:
+        print("Error purchasing stamp. Exiting.")
         return
 
 if __name__ == "__main__":

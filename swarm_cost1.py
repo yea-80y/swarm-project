@@ -21,6 +21,8 @@ POSTAGE_CONTRACT_ABI = [
 PLUR_PER_xBZZ = Decimal(10**16)  # Conversion factor
 CHUNK_SIZE_BYTES = Decimal(4096)  # Chunk size in Bytes
 BLOCKS_PER_YEAR = Decimal(6_307_200)  # Assuming 5s per block, 1 year
+BLOCK_TIME_SECONDS = Decimal(5)
+STORAGE_TIME_SECONDS = Decimal(365 * 24 * 60 * 60)  # 1 year in seconds
 
 def is_connected_to_dappnode():
     url = 'http://bee.swarm.public.dappnode:1633/health'
@@ -80,31 +82,24 @@ def calculate_required_depth(file_size):
 
 def calculate_required_plur(depth, price_per_block):
     depth = Decimal(depth)
-    max_volume_bytes = (Decimal(2) ** depth) * CHUNK_SIZE_BYTES
-    max_volume_mb = max_volume_bytes / (Decimal(1024) * Decimal(1024))
-    num_chunks = max_volume_bytes / CHUNK_SIZE_BYTES
-    required_plur = price_per_block * BLOCKS_PER_YEAR  # PLUR required per year per chunk
-    total_plur = required_plur * num_chunks  # Total required PLUR
+    amount = (price_per_block / BLOCK_TIME_SECONDS) * STORAGE_TIME_SECONDS
+    total_plur = (Decimal(2) ** depth) * amount
     total_xbzz = total_plur / PLUR_PER_xBZZ
 
     print(f"\nDepth: {depth}")
-    print(f"Max volume for depth: {max_volume_mb:.6f} MB")
-    print(f"Chunk size: {CHUNK_SIZE_BYTES} Bytes")
-    print(f"Number of chunks: {int(num_chunks)}")
-    print(f"Price per block in PLUR: {price_per_block}")
+    print(f"Amount per chunk: {amount:.6f} PLUR")
     print(f"Total PLUR required: {total_plur:.6f}")
     print(f"Total xBZZ required: {total_xbzz:.6f}")
     
-    return total_plur
+    return amount, total_plur
 
-def purchase_stamp(base_url, amount, depth, immutable, label):
-    headers = {"immutable": "true" if immutable else "false"}
-    url = f"{base_url}/stamps/{amount}/{depth}"
+def purchase_postage_stamp(base_url, amount, depth, label, mutable):
+    immutable_flag = "false" if mutable else "true"
     try:
-        response = requests.post(url, headers=headers)
+        response = requests.post(f'{base_url}/stamps/{int(amount)}/{depth}', headers={"immutable": immutable_flag})
         if response.status_code == 201:
-            batch_id = response.json().get("batchID")
-            print(f"Stamp successfully purchased. Batch ID: {batch_id}")
+            batch_id = response.json().get('batchID')
+            print(f"Stamp successfully purchased with label '{label}'. Batch ID: {batch_id}")
             return batch_id
         else:
             print(f"Failed to purchase stamp. Status code: {response.status_code}, Message: {response.text}")
@@ -112,6 +107,24 @@ def purchase_stamp(base_url, amount, depth, immutable, label):
     except requests.RequestException as e:
         print(f"Error purchasing stamp: {e}")
         return None
+
+def upload_file(base_url, file_path, batch_id, content_type, encrypt):
+    encrypt_flag = "true" if encrypt else "false"
+    headers = {
+        "Swarm-Postage-Batch-Id": batch_id,
+        "Content-Type": content_type,
+        "Swarm-Encrypt": encrypt_flag
+    }
+    try:
+        with open(file_path, 'rb') as file:
+            response = requests.post(f'{base_url}/bzz', headers=headers, data=file)
+            if response.status_code == 201:
+                swarm_hash = response.json().get('reference')
+                print(f"File successfully uploaded. Swarm Hash: {swarm_hash}")
+            else:
+                print(f"Failed to upload file. Status code: {response.status_code}, Message: {response.text}")
+    except requests.RequestException as e:
+        print(f"Error uploading file: {e}")
 
 def main():
     base_url = 'http://bee.swarm.public.dappnode:1633'
@@ -134,24 +147,16 @@ def main():
             return
     
     file_path = input("Enter the path to the file you want to upload: ").strip()
-    if not os.path.exists(file_path):
-        print("Invalid file path. Exiting.")
-        return
-    
     file_size = os.path.getsize(file_path)
     depth = calculate_required_depth(file_size)
     price_per_block = get_price_per_block()
-    required_plur = calculate_required_plur(depth, price_per_block)
-    
+    amount, total_plur = calculate_required_plur(depth, price_per_block)
     content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
-    print(f"Detected Content-Type: {content_type}")
-    
-    should_be_mutable = input("Should the file be mutable? (yes/no): ").strip().lower() == 'yes'
-    label = input("Enter a label for the new stamp: ").strip()
-    batch_id = purchase_stamp(base_url, required_plur, depth, not should_be_mutable, label)
-    if not batch_id:
-        print("Error purchasing stamp. Exiting.")
-        return
+    mutable = input("Should the file be mutable? (yes/no): ").strip().lower() == 'yes'
+    label = input("Enter a label for the new stamp: ")
+    batch_id = purchase_postage_stamp(base_url, amount, depth, label, mutable)
+    encrypt = input("Should the file be encrypted? (yes/no): ").strip().lower() == 'yes'
+    upload_file(base_url, file_path, batch_id, content_type, encrypt)
 
 if __name__ == "__main__":
     main()

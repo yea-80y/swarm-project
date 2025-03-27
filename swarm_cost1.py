@@ -9,9 +9,11 @@ from decimal import Decimal, getcontext
 # Set higher precision for decimal calculations
 getcontext().prec = 20
 
-# Connect to Ethereum Bee Node
-BEE_API_URL = "http://nethermind-xdai.dappnode:8545"
-web3 = Web3(Web3.HTTPProvider(BEE_API_URL))
+# Connect to Ethereum Bee Node and Web3 provider
+WEB3_RPC_URL = "https://rpc.gnosischain.com"
+BEE_API_URL = "http://localhost:1633"
+
+web3 = Web3(Web3.HTTPProvider(WEB3_RPC_URL))
 
 POSTAGE_CONTRACT_ADDRESS = "0x45a1502382541Cd610CC9068e88727426b696293"
 POSTAGE_CONTRACT_ABI = [
@@ -24,12 +26,12 @@ BLOCKS_PER_YEAR = Decimal(6_307_200)  # Assuming 5s per block, 1 year
 BLOCK_TIME_SECONDS = Decimal(5)
 STORAGE_TIME_SECONDS = Decimal(365 * 24 * 60 * 60)  # 1 year in seconds
 
-def is_connected_to_dappnode():
-    url = 'http://bee.swarm.public.dappnode:1633/health'
+def is_connected_to_bee():
+    url = f'{BEE_API_URL}/health'
     try:
         response = requests.get(url)
         if response.status_code == 200:
-            print("Connected to DAppNode Bee node.")
+            print("Connected to local Bee node.")
             return True
         else:
             print("Failed to connect to Bee node. Status code:", response.status_code)
@@ -127,8 +129,8 @@ def upload_file(base_url, file_path, batch_id, content_type, encrypt):
         print(f"Error uploading file: {e}")
 
 def main():
-    base_url = 'http://bee.swarm.public.dappnode:1633'
-    if not is_connected_to_dappnode():
+    base_url = BEE_API_URL
+    if not is_connected_to_bee():
         print("Error: Could not connect to Bee node. Exiting.")
         return
 

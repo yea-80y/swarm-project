@@ -9,7 +9,7 @@ from decimal import Decimal, getcontext
 # Set high precision for xBZZ/PLUR conversions
 getcontext().prec = 20
 
-# Ethereum & Bee setup
+# Bee and Gnosis Chain endpoints
 WEB3_RPC_URL = "https://rpc.gnosischain.com"
 BEE_API_URL = "http://localhost:1633"
 web3 = Web3(Web3.HTTPProvider(WEB3_RPC_URL))

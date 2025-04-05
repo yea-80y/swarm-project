@@ -1,122 +1,99 @@
 import requests
 import json
 import os
-import math
 import mimetypes
 import time
 from web3 import Web3
 from decimal import Decimal, getcontext
 
-# Set higher precision for decimal calculations
+# --- Configuration and Constants ---
+
+# Set higher precision for xBZZ math
 getcontext().prec = 20
 
-# Connect to Ethereum Bee Node and Web3 provider
+# Bee and Gnosis Chain endpoints
 WEB3_RPC_URL = "https://rpc.gnosischain.com"
 BEE_API_URL = "http://localhost:1633"
+
+# Connect to web3 for pricing info
 web3 = Web3(Web3.HTTPProvider(WEB3_RPC_URL))
 
-# Contract details for fetching price per block
+# Postage stamp contract info
 POSTAGE_CONTRACT_ADDRESS = "0x45a1502382541Cd610CC9068e88727426b696293"
 POSTAGE_CONTRACT_ABI = [
     {"inputs": [], "name": "lastPrice", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}
 ]
 
-# Constants for conversion and storage duration
-PLUR_PER_xBZZ = Decimal(10**16)  # Conversion factor
-CHUNK_SIZE_BYTES = Decimal(4096)  # Size of each chunk in bytes
-BLOCKS_PER_YEAR = Decimal(6_307_200)  # Estimated number of blocks in one year
-BLOCK_TIME_SECONDS = Decimal(5)  # Block interval on Gnosis Chain
-STORAGE_TIME_SECONDS = Decimal(365 * 24 * 60 * 60)  # 1 year in seconds
+# Conversion constants and Swarm assumptions
+PLUR_PER_xBZZ = Decimal(10**16)
+CHUNK_SIZE_BYTES = Decimal(4096)
+BLOCK_TIME_SECONDS = Decimal(5)
+STORAGE_TIME_SECONDS = Decimal(365 * 24 * 60 * 60)  # 1 year
 
-# Checks connection to the Bee node
+# --- Helper Functions ---
+
+# Ping Bee node to ensure it's healthy
 def is_connected_to_bee():
-    url = f'{BEE_API_URL}/health'
     try:
-        response = requests.get(url)
-        if response.status_code == 200:
-            print("Connected to local Bee node.")
-            return True
-        else:
-            print("Failed to connect to Bee node. Status code:", response.status_code)
-            return False
+        response = requests.get(f'{BEE_API_URL}/health')
+        return response.status_code == 200
     except requests.ConnectionError:
-        print("Failed to connect to Bee node. Connection error.")
         return False
 
-# Retrieves existing stamps from the Bee node
-def get_existing_stamps(base_url):
-    try:
-        response = requests.get(f'{base_url}/stamps')
-        if response.status_code == 200:
-            stamps = response.json().get('stamps', [])
-            if not stamps:
-                print("No existing stamps found.")
-            return stamps
-        else:
-            print("No existing stamps found.")
-            return []
-    except requests.RequestException:
-        print("Error fetching existing stamps.")
-        return []
-
-# Fetches the current postage price per block from the contract
+# Fetch current on-chain storage price
 def get_price_per_block():
     try:
         contract = web3.eth.contract(address=POSTAGE_CONTRACT_ADDRESS, abi=POSTAGE_CONTRACT_ABI)
         return Decimal(contract.functions.lastPrice().call())
-    except Exception as e:
-        print(f"Error fetching price per block from contract: {e}")
+    except:
         return None
 
-# Gets the xBZZ wallet balance from the Bee node
+# Get xBZZ wallet balance from Bee node
 def get_wallet_balance(base_url):
     try:
         response = requests.get(f'{base_url}/wallet')
         if response.status_code == 200:
-            balance_data = response.json()
-            balance_plur = Decimal(balance_data.get('bzzBalance', 0))
-            balance_xbzz = balance_plur / PLUR_PER_xBZZ
-            return balance_xbzz
-        else:
-            print("Failed to fetch wallet balance. Status code:", response.status_code)
-            return None
-    except requests.RequestException:
-        print("Error fetching wallet balance.")
-        return None
+            balance_plur = Decimal(response.json().get('bzzBalance', 0))
+            return balance_plur / PLUR_PER_xBZZ
+    except:
+        pass
+    return Decimal(0)
 
-# Calculates the minimum depth required to store a file of the given size
+# Determine required depth to fit a file of given size
 def calculate_required_depth(file_size):
     for depth in range(17, 32):
-        max_volume_bytes = (Decimal(2) ** Decimal(depth)) * CHUNK_SIZE_BYTES
-        if file_size <= max_volume_bytes:
+        if file_size <= (2 ** depth) * CHUNK_SIZE_BYTES:
             return depth
-    return 31  # Use max depth as fallback
+    return 31
 
-# Calculates required PLUR and xBZZ to store a file for 1 year
+# Calculate cost to store at specific depth
 def calculate_required_plur(depth, price_per_block):
-    depth = Decimal(depth)
-    amount = (price_per_block / BLOCK_TIME_SECONDS) * STORAGE_TIME_SECONDS
-    total_plur = (Decimal(2) ** depth) * amount
-    total_xbzz = total_plur / PLUR_PER_xBZZ
+    amount_per_chunk = (price_per_block / BLOCK_TIME_SECONDS) * STORAGE_TIME_SECONDS
+    total_chunks = Decimal(2) ** Decimal(depth)
+    total_plur = total_chunks * amount_per_chunk
+    return amount_per_chunk, total_plur, total_plur / PLUR_PER_xBZZ
 
-    print(f"\nDepth: {depth}")
-    print(f"Amount per chunk: {amount:.6f} PLUR")
-    print(f"Total PLUR required: {total_plur:.6f}")
-    print(f"Total xBZZ required: {total_xbzz:.6f}")
+# Fetch existing batches from Bee node
+def get_existing_stamps(base_url):
+    try:
+        response = requests.get(f'{base_url}/stamps')
+        if response.status_code == 200:
+            return response.json().get('stamps', [])
+    except:
+        pass
+    return []
 
-    return amount, total_plur, total_xbzz
-
-# Creates a tag to track upload progress
+# Create tag for upload progress tracking
 def create_tag(base_url):
     try:
         response = requests.post(f"{base_url}/tags")
         if response.status_code == 201:
             return response.json().get("uid")
-    except requests.RequestException as e:
-        print(f"Error creating tag: {e}")
+    except:
+        pass
     return None
 
-# Polls the tag to check upload progress and return percentage complete
+# Get upload progress via tag
 def get_tag_progress(base_url, tag_uid):
     try:
         response = requests.get(f"{base_url}/tags/{tag_uid}")
@@ -124,55 +101,57 @@ def get_tag_progress(base_url, tag_uid):
             tag = response.json()
             total = tag.get("total", 1)
             processed = tag.get("processed", 0)
-            percent = int((processed / total) * 100) if total > 0 else 0
-            return percent
-    except requests.RequestException:
+            return int((processed / total) * 100) if total > 0 else 0
+    except:
         pass
     return None
 
-# Purchases a new postage stamp
-def purchase_postage_stamp(base_url, amount, depth, label, mutable):
-    immutable_flag = "false" if mutable else "true"
-    try:
-        response = requests.post(f'{base_url}/stamps/{int(amount)}/{depth}', headers={"immutable": immutable_flag})
-        if response.status_code == 201:
-            batch_id = response.json().get('batchID')
-            print(f"Stamp successfully purchased with label '{label}'. Batch ID: {batch_id}")
-            return batch_id
-        else:
-            print(f"Failed to purchase stamp. Status code: {response.status_code}, Message: {response.text}")
-            return None
-    except requests.RequestException as e:
-        print(f"Error purchasing stamp: {e}")
-        return None
-
-# Waits for the newly created stamp to become usable (after 10+ blocks)
-def wait_for_stamp_usable(base_url, batch_id, min_wait_blocks=10):
+# Wait for batch to become usable (10+ blocks confirmed)
+def wait_for_stamp_usable(base_url, batch_id, min_blocks=10):
     print("\nUpload pending... This usually takes less than a minute.")
-    time.sleep(int(min_wait_blocks) * int(BLOCK_TIME_SECONDS))
+    time.sleep(int(min_blocks) * int(BLOCK_TIME_SECONDS))
     while True:
         try:
             response = requests.get(f"{base_url}/stamps/{batch_id}")
             if response.status_code == 200:
-                usable = response.json().get("usable", False)
-                if usable:
+                if response.json().get("usable", False):
                     break
-        except requests.RequestException:
+        except:
             pass
         time.sleep(5)
 
-# Uploads the file to the Bee node using the specified batch
+# Buy a new batch of postage stamps
+def purchase_postage_stamp(base_url, amount, depth, label, mutable):
+    try:
+        response = requests.post(
+            f'{base_url}/stamps/{int(amount)}/{depth}',
+            headers={"immutable": "false" if mutable else "true", "label": label}
+        )
+        if response.status_code == 201:
+            return response.json().get('batchID')
+    except:
+        pass
+    return None
+
+# Increase storage capacity (depth) of existing batch
+def dilute_batch(base_url, batch_id, new_depth):
+    try:
+        response = requests.patch(f'{base_url}/stamps/topup/{batch_id}/{new_depth}')
+        return response.status_code == 200
+    except:
+        return False
+
+# Perform file upload with tracking
 def upload_file(base_url, file_path, batch_id, content_type, encrypt):
-    encrypt_flag = "true" if encrypt else "false"
     tag_uid = create_tag(base_url)
     if not tag_uid:
-        print("Failed to create tag. Upload cannot proceed.")
+        print("❌ Failed to create tag. Upload aborted.")
         return
 
     headers = {
         "Swarm-Postage-Batch-Id": batch_id,
         "Content-Type": content_type,
-        "Swarm-Encrypt": encrypt_flag
+        "Swarm-Encrypt": "true" if encrypt else "false"
     }
 
     try:
@@ -186,55 +165,113 @@ def upload_file(base_url, file_path, batch_id, content_type, encrypt):
                         if percent >= 100:
                             break
                     time.sleep(1)
-                swarm_hash = response.json().get('reference')
-                print(f"\n✅ File successfully uploaded. Swarm Hash: {swarm_hash}")
+                print(f"\n✅ File uploaded. Swarm Hash: {response.json().get('reference')}")
             else:
-                print(f"Failed to upload file. Status code: {response.status_code}, Message: {response.text}")
-    except requests.RequestException as e:
-        print(f"Error uploading file: {e}")
+                print(f"❌ Upload failed: {response.status_code} {response.text}")
+    except Exception as e:
+        print(f"❌ Upload error: {e}")
 
-# Entry point of the program
+# --- Main Program Flow ---
+
 def main():
-    base_url = BEE_API_URL
     if not is_connected_to_bee():
-        print("Error: Could not connect to Bee node. Exiting.")
+        print("Error: Could not connect to Bee node.")
         return
 
-    wallet_balance = get_wallet_balance(base_url) or Decimal(0.0)
-    print(f"\nYour xBZZ Balance: {wallet_balance:.6f} xBZZ")
+    print("Connected to Bee node.\n")
+    base_url = BEE_API_URL
+    wallet_balance = get_wallet_balance(base_url)
+    print(f"Your xBZZ Balance: {wallet_balance:.6f} xBZZ")
 
+    # Step 1: Load file and calculate upload cost
+    file_path = input("\nEnter the path to the file you want to upload: ").strip()
+    file_size = os.path.getsize(file_path)
+    file_mb = Decimal(file_size) / (1024 ** 2)
+    print(f"File size: {round(file_mb, 2)} MB")
+
+    price_per_block = get_price_per_block()
+    depth = calculate_required_depth(file_size)
+    _, total_plur, total_xbzz = calculate_required_plur(depth, price_per_block)
+    print(f"Estimated storage cost for 1 year: {total_xbzz:.6f} xBZZ")
+
+    # Step 2: Show existing usable batches (if any)
     existing_stamps = get_existing_stamps(base_url)
     if existing_stamps:
-        print("\nExisting Stamps:")
-        for stamp in existing_stamps:
-            ttl_days = stamp.get('batchTTL', 0) / (24 * 3600)
-            print(f"Stamp ID: {stamp['batchID']} - Usable: {stamp['usable']} - Label: {stamp.get('label', 'N/A')} - TTL: {ttl_days:.2f} days")
+        print("\nAvailable Batches:")
+        usable_batches = []
+        for i, stamp in enumerate(existing_stamps):
+            if stamp.get("usable", False):
+                batch_depth = int(stamp["depth"])
+                utilization = Decimal(stamp.get("utilization", 0))
+                total_mb = ((2 ** batch_depth) * CHUNK_SIZE_BYTES) / (1024 ** 2)
+                used_mb = total_mb * utilization
+                remaining_mb = total_mb - used_mb
+                label = stamp.get("label", "N/A")
+                print(f"{i+1}) Label: {label} | TTL: {round(stamp['batchTTL']/86400,2)} days | Remaining: {round(remaining_mb, 2)} MB")
+                usable_batches.append((stamp, remaining_mb))
 
-        use_existing = input("Do you want to use an existing stamp? (yes/no): ").strip().lower()
-        if use_existing == 'yes':
-            return
+        # Step 3: Ask user if they want to use an existing batch
+        if usable_batches:
+            use_existing = input("\nUse an existing batch? (yes/no): ").strip().lower()
+            if use_existing == 'yes':
+                selection = 0
+                if len(usable_batches) > 1:
+                    selection = int(input("Select batch number: ")) - 1
 
-    file_path = input("Enter the path to the file you want to upload: ").strip()
-    file_size = os.path.getsize(file_path)
-    depth = calculate_required_depth(file_size)
-    price_per_block = get_price_per_block()
-    amount, total_plur, total_xbzz = calculate_required_plur(depth, price_per_block)
+                selected_stamp, remaining_mb = usable_batches[selection]
+                selected_batch_id = selected_stamp['batchID']
+                batch_depth = int(selected_stamp['depth'])
 
+                if file_mb > remaining_mb:
+                    print(f"\n⚠️ Not enough storage left. Required: {round(file_mb, 2)} MB | Remaining: {round(remaining_mb, 2)} MB")
+                    new_depth = batch_depth + 1
+                    _, add_plur, add_xbzz = calculate_required_plur(new_depth, price_per_block)
+                    print(f"💡 To upload this file, your batch will need more storage.")
+                    print(f"Cost to increase capacity: {add_xbzz:.4f} xBZZ")
+
+                    if wallet_balance < add_xbzz:
+                        print("❌ Not enough funds to increase batch capacity.")
+                        return
+
+                    proceed = input("Do you want to increase storage? (yes/no): ").strip().lower()
+                    if proceed != 'yes':
+                        return
+
+                    if not dilute_batch(base_url, selected_batch_id, new_depth):
+                        print("❌ Failed to increase storage.")
+                        return
+
+                # Ask about encryption + immutability (if batch allows)
+                encrypt = input("Should the file be encrypted? (yes/no): ").strip().lower() == 'yes'
+                if selected_stamp.get("immutable") is False:
+                    immutable = input("Should the file be immutable? (yes/no): ").strip().lower() != 'no'
+                else:
+                    immutable = True  # Enforced by batch config
+
+                wait_for_stamp_usable(base_url, selected_batch_id)
+                upload_file(base_url, file_path, selected_batch_id, content_type=mimetypes.guess_type(file_path)[0] or "application/octet-stream", encrypt=encrypt)
+                return
+
+    # Step 4: Fallback to creating a new batch
     if wallet_balance < total_xbzz:
-        print("\n❌ Insufficient funds. Your wallet does not have enough xBZZ to cover this upload.")
+        print("❌ Insufficient funds to create new batch.")
         return
 
-    content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
-    mutable = input("Should the file be mutable? (yes/no): ").strip().lower() == 'yes'
-    label = input("Enter a label for the new stamp: ")
-    batch_id = purchase_postage_stamp(base_url, amount, depth, label, mutable)
+    mutable = input("Should this batch allow future updates? (yes/no): ").strip().lower() == 'yes'
+    label = input("Enter a label for the new batch: ")
+    batch_id = purchase_postage_stamp(base_url, amount=total_plur, depth=depth, label=label, mutable=mutable)
     if not batch_id:
+        print("❌ Failed to create new batch.")
         return
 
     encrypt = input("Should the file be encrypted? (yes/no): ").strip().lower() == 'yes'
+    if mutable:
+        immutable = input("Should the file be immutable? (yes/no): ").strip().lower() != 'no'
+    else:
+        immutable = True
+
     wait_for_stamp_usable(base_url, batch_id)
-    print("\nUploading file...")
-    upload_file(base_url, file_path, batch_id, content_type, encrypt)
+    upload_file(base_url, file_path, batch_id, content_type=mimetypes.guess_type(file_path)[0] or "application/octet-stream", encrypt=encrypt)
 
 if __name__ == "__main__":
     main()

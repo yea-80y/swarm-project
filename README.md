@@ -1,109 +1,118 @@
-# Swarm Uploader
+# 🐝 Swarm Uploader
 
-A modular Python application for uploading files to the Swarm decentralized storage network using the Bee node API. This tool supports mutable and immutable uploads, encryption, storage cost calculation, feed updates, and local file tracking.
+A Python-based tool to upload files to the [Ethereum Swarm](https://docs.ethswarm.org) decentralized storage network via your local Bee node.
+
+It supports:
+- Immutable and mutable (Swarm Feed) uploads
+- Encryption
+- Smart batch handling
+- Local feed history using JSON
 
 ---
 
-## 🌐 Project Structure
+## 🔧 Features
+
+- Upload files with a simple terminal flow
+- Calculate and display file size and storage cost (1 year)
+- Automatically determine appropriate batch depth
+- Use or create stamp batches
+- Support Swarm Feeds for versioned/mutable uploads
+- Encrypted or plaintext file upload
+- Store feed history in `local_feeds.json`
+- Auto-dilute existing batch if not enough storage
+- Waits until batch is usable before uploading
+
+---
+
+## 📁 Project Structure
 
 ```
 swarm_uploader/
-├── main.py                  # Entry point (user flow and prompts)
-├── config.py                # Bee node URL, constants, contract details
-├── bee_api.py               # Bee API integration (wallet, health, stamps)
-├── storage.py               # Handles pricing, depth, stamp creation and dilution
-├── upload.py                # Upload logic, including feeds and encryption
-├── local_store.py           # Local JSON feed tracking
-├── utils.py                 # Shared helpers (file size, mime types)
-├── README.md                # You're here!
+├── main.py           # Entry point, handles full upload flow
+├── config.py         # Settings and constants (RPCs, PLUR conversion, etc.)
+├── bee_api.py        # Bee node API: health, wallet, stamps
+├── storage.py        # Depth calculation, pricing, dilution
+├── upload.py         # Upload logic including tags, feeds, and encryption
+├── feeds.py          # Swarm Feed-specific helpers
+├── local_store.py    # Read/write local feed history JSON
+├── utils.py          # Utility functions (file size, content type, etc.)
+├── README.md         # This file
 ```
 
 ---
 
-## 💡 Features
-
-- Connects to a Bee node and retrieves your xBZZ wallet balance.
-- Prints existing storage batches (buckets) and allows the user to select or create new ones.
-- Calculates required depth and cost for storing files up to 1 year.
-- Automatically detects if storage capacity needs to be increased (batch dilution).
-- Supports:
-  - Encrypted or unencrypted files
-  - Mutable or immutable uploads
-  - Swarm Feeds for mutable file updates (e.g., websites, logs)
-- Tracks uploaded file names locally (via `local_feeds.json`).
-- Prompts user to update existing files if using Swarm Feeds.
-- Optionally saves feed info locally; otherwise prints all details to save manually.
-
----
-
-## 🛠️ Prerequisites
+## ✅ Requirements
 
 - Python 3.8+
-- Running Bee node (full or light mode)
-- xBZZ in your Bee wallet
-- [Gnosis Chain](https://www.gnosischain.com/) connection to fetch storage pricing
+- A Bee node running (e.g. `http://localhost:1633`)
+- xBZZ tokens in your wallet (Gnosis chain)
+- Internet access (for price lookups)
 
 ---
 
-## 📦 Setup
+## 📦 Install Dependencies
 
-1. Clone or download this repo.
-2. Install dependencies:
-   ```bash
-   pip install requests web3
-   ```
-3. Make sure your Bee node is accessible and configured properly.
-4. Open the `swarm_uploader` folder in VS Code (or your editor).
+Install required libraries:
+
+```bash
+pip install requests web3
+```
+
+Or create a `requirements.txt`:
+
+```
+requests
+web3
+```
+
+And install with:
+
+```bash
+pip install -r requirements.txt
+```
 
 ---
 
-## ▶️ Running the Program
+## 🚀 How to Run
+
+Run the main script:
 
 ```bash
 python main.py
 ```
 
 The program will:
-1. Connect to your Bee node.
-2. Show your wallet balance and existing batches.
-3. Prompt you to:
-   - Use an existing batch
-   - Update a previous file (if using Swarm feeds)
-   - Upload a new file (with settings for encryption and immutability)
-4. Automatically calculate costs and update or dilute batches as needed.
+1. Check if Bee node is online
+2. Print wallet balance and available batches
+3. Ask to use an existing batch or create a new one
+4. Ask for the file, encryption, immutability, and feed name (if mutable)
+5. Estimate cost and perform upload
+6. Prompt to save feed metadata locally
 
 ---
 
-## 📁 Local Feed Tracking
+## 📝 Notes
 
-Uploads to mutable batches are tracked in `local_feeds.json` like this:
-
-```json
-{
-  "batch_id_1": {
-    "MyWebsite": "swarm_hash_abc123...",
-    "MyBackup": "swarm_hash_xyz789..."
-  }
-}
-```
-
-You can use this to:
-- Track what you've uploaded
-- Reuse feed names to update content
-- Avoid duplicating or overwriting unintentionally
+- Files on **mutable batches** use **Swarm Feeds**, which allow updates using a consistent file name
+- Feed data is saved in `local_feeds.json`
+- If no local file is found, you’ll still be prompted to name/update your file manually
+- Batch storage will be increased (diluted) if needed
+- TTL will match existing chunks when increasing capacity
 
 ---
 
-## 💬 Terminology Simplified
+## 🌐 Useful Links
 
-| Swarm Term   | Displayed As          |
-|--------------|-----------------------|
-| Stamp        | Batch / Storage Bucket|
-| Topic Name   | File Name (for feeds) |
-| Depth        | Storage Capacity Level|
-| Immutable    | Unchangeable Upload   |
-| Mutable      | Updatable (via feeds) |
+- 📖 [Swarm Docs](https://docs.ethswarm.org)
+- 🔗 [Bee API Reference](https://docs.ethswarm.org/docs/access-the-swarm/api-reference/)
+- 🧠 [Swarm Feeds](https://docs.ethswarm.org/docs/access-the-swarm/feeds/)
+- 💰 [xBZZ Token](https://docs.ethswarm.org/docs/fundamentals/bzz-token/)
+- 🧪 [Swarm GitHub](https://github.com/ethersphere)
 
 ---
+
+## 🤝 License
+
+This project is licensed under the MIT License.
 
 

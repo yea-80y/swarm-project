@@ -11,7 +11,7 @@ getcontext().prec = 20  # Precision for decimal calculations
 
 # Set up connection details
 WEB3_RPC_URL = "https://rpc.gnosischain.com"
-BEE_API_URL = "http://bee.swarm.public.dappnode:1633"
+BEE_API_URL = "http://localhost:1633"
 web3 = Web3(Web3.HTTPProvider(WEB3_RPC_URL))
 
 # Smart contract address and ABI for xBZZ price lookups

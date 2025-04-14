@@ -33,7 +33,6 @@ swarm_uploader/
 ├── bee_api.py        # Bee node API: health, wallet, stamps
 ├── storage.py        # Depth calculation, pricing, dilution
 ├── upload.py         # Upload logic including tags, feeds, and encryption
-├── feeds.py          # Swarm Feed-specific helpers
 ├── local_store.py    # Read/write local feed history JSON
 ├── utils.py          # Utility functions (file size, content type, etc.)
 ├── README.md         # This file

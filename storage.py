@@ -18,18 +18,34 @@ def calculate_required_depth(file_size):
 
 
 def calculate_required_plur(depth, price_per_block):
-    """Calculate PLUR and xBZZ required to store at the given depth for 1 year."""
+    """Calculate PLUR and xBZZ required to store at the given depth for 1 week (testing)."""
     amount_per_chunk = (price_per_block / BLOCK_TIME_SECONDS) * STORAGE_TIME_SECONDS
     total_chunks = Decimal(2) ** Decimal(depth)
     total_plur = total_chunks * amount_per_chunk
     return amount_per_chunk, total_plur, total_plur / PLUR_PER_xBZZ
 
 
-def dilute_batch(batch_id, new_depth):
-    """Dilute the batch to increase storage capacity by increasing the depth."""
+def dilute_batch(batch_id, old_depth, new_depth, price_per_block):
+    """Dilute the batch and immediately top up to align TTL with quoted price."""
     try:
-        return requests.patch(f"{BEE_API_URL}/stamps/topup/{batch_id}/{new_depth}").status_code == 200
-    except:
+        response = requests.patch(f"{BEE_API_URL}/stamps/topup/{batch_id}/{new_depth}")
+        print(f"🛠️ Dilution response: {response.status_code} - {response.text}")
+        if response.status_code != 200:
+            return False
+
+        # Calculate how many new chunks were unlocked
+        extra_chunks = Decimal(2) ** Decimal(new_depth) - Decimal(2) ** Decimal(old_depth)
+        amount_per_chunk = (price_per_block / BLOCK_TIME_SECONDS) * STORAGE_TIME_SECONDS
+        topup_plur = extra_chunks * amount_per_chunk
+
+        # Perform top-up to match TTL for new chunks
+        topup_response = requests.patch(f"{BEE_API_URL}/stamps/topup/{batch_id}")
+        print(f"🛠️ TTL Top-Up response: {topup_response.status_code} - {topup_response.text}")
+
+        return topup_response.status_code == 200
+
+    except Exception as e:
+        print(f"❌ Error during batch dilution or top-up: {e}")
         return False
 
 

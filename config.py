@@ -5,7 +5,7 @@ from web3 import Web3
 
 # RPC and Bee Node API URLs
 WEB3_RPC_URL = "https://rpc.gnosischain.com"
-BEE_API_URL = "http://localhost:1633"  # or your DAppNode URL
+BEE_API_URL = "http://bee.swarm.public.dappnode:1633"  # or your DAppNode URL
 
 # Swarm Postage Contract Info
 POSTAGE_CONTRACT_ADDRESS = "0x45a1502382541Cd610CC9068e88727426b696293"

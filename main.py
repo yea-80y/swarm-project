@@ -92,7 +92,7 @@ def main():
             encrypt = input("Should the file be encrypted? (yes/no): ").strip().lower() == 'yes'
             immutable = not mutable or input("Should the file be immutable? (yes/no): ").strip().lower() != 'no'
             wait_for_stamp_usable(batch_id)
-            swarm_hash = upload_file(file_path, batch_id, content_type, encrypt, file_name)
+            swarm_hash = upload_file(file_path, batch_id, encrypt, file_name)
             if swarm_hash:
                 print(f"\nℹ️ File name: {file_name}")
                 print(f"ℹ️ Swarm hash: {swarm_hash}")

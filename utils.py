@@ -9,7 +9,7 @@ from decimal import Decimal
 CHUNK_SIZE_BYTES = Decimal(4096)
 PLUR_PER_xBZZ = Decimal(10**16)
 BLOCK_TIME_SECONDS = Decimal(5)
-STORAGE_TIME_SECONDS = Decimal(365 * 24 * 60 * 60)  # 1 year
+STORAGE_TIME_SECONDS = Decimal(7 * 24 * 60 * 60)  # 1 week (for testing)
 
 # --- File Utilities ---
 def get_file_size(file_path):
@@ -45,7 +45,7 @@ def calculate_required_plur(depth, price_per_block):
     - price per chunk
     - total cost in PLUR
     - total cost in xBZZ (converted)
-    for storing data at a given depth for 1 year.
+    for storing data at a given depth for 1 week (testing mode).
     """
     amount_per_chunk = (price_per_block / BLOCK_TIME_SECONDS) * STORAGE_TIME_SECONDS
     total_chunks = Decimal(2) ** Decimal(depth)

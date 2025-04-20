@@ -6,6 +6,7 @@ import time
 import os
 from bee_api import create_tag, get_tag_progress, wait_for_stamp_usable
 from local_store import save_local_feed  # ✅ Corrected import
+from config import BEE_API_URL
 
 # Upload file to Bee node
 def upload_file(file_path, batch_id, encrypt=False, topic_name=None):
@@ -27,7 +28,7 @@ def upload_file(file_path, batch_id, encrypt=False, topic_name=None):
 
     with open(file_path, 'rb') as f:
         try:
-            response = requests.post(f"http://localhost:1633/bzz?tag={tag_uid}", headers=headers, data=f)
+            response = requests.post(f"{BEE_API_URL}/bzz?tag={tag_uid}", headers=headers, data=f)
             if response.status_code == 201:
                 while True:
                     percent = get_tag_progress(tag_uid)

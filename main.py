@@ -77,17 +77,24 @@ def main():
 
             if file_mb > remaining_mb:
                 new_depth = depth + 1
-                _, add_plur, add_xbzz = calculate_required_plur(new_depth, get_price_per_block())
-                print(f"\n⚠️ Not enough space. Need: {round(file_mb,2)} MB | Remaining: {round(remaining_mb,2)} MB")
+                price_per_block = get_price_per_block()
+                _, add_plur, add_xbzz = calculate_required_plur(new_depth, price_per_block)
+                print(f"\n⚠️ Not enough space. Need: {round(file_mb, 2)} MB | Remaining: {round(remaining_mb, 2)} MB")
                 print(f"Cost to increase capacity: {add_xbzz:.6f} xBZZ")
+
                 if wallet_balance < add_xbzz:
                     print("❌ Not enough xBZZ to increase storage.")
                     return
+
                 if input("Increase storage? (yes/no): ").strip().lower() != 'yes':
                     return
-                if not dilute_batch(batch_id, new_depth):
+
+                if not dilute_batch(batch_id, depth, new_depth, price_per_block):
                     print("❌ Failed to increase storage.")
                     return
+
+                print("✅ Storage capacity successfully increased and TTL aligned.")
+
 
             encrypt = input("Should the file be encrypted? (yes/no): ").strip().lower() == 'yes'
             immutable = not mutable or input("Should the file be immutable? (yes/no): ").strip().lower() != 'no'

@@ -1,4 +1,4 @@
-from config import BEE_API_URL
+from config import BEE_API_URL, STORAGE_TIME_SECONDS
 from bee_api import (
     is_connected_to_bee,
     get_wallet_balance,
@@ -9,8 +9,9 @@ from bee_api import (
 from storage import (
     calculate_required_depth,
     calculate_required_plur,
-    purchase_postage_stamp,   # ✅ moved here from bee_api
-    dilute_batch
+    purchase_postage_stamp,
+    dilute_batch,
+    get_effective_capacity_mb
 )
 from upload import (
     upload_file
@@ -22,7 +23,6 @@ from local_store import (
 import os
 import mimetypes
 from decimal import Decimal
-
 
 def main():
     if not is_connected_to_bee():
@@ -42,9 +42,10 @@ def main():
         for i, stamp in enumerate(stamps):
             if stamp.get("usable", False):
                 depth = int(stamp["depth"])
-                total_mb = (2 ** depth) * Decimal(4096) / (1024 ** 2)
+                bucket_depth = int(stamp["bucketDepth"])
                 utilization = Decimal(stamp.get("utilization", 0))
-                remaining_mb = total_mb * (1 - utilization)
+                effective_mb = get_effective_capacity_mb(depth)
+                remaining_mb = effective_mb * (1 - utilization)
                 label = stamp.get("label", "N/A")
                 ttl_days = round(stamp['batchTTL'] / 86400, 2)
                 print(f"{i+1}) Label: {label} | TTL: {ttl_days} days | Remaining: {round(remaining_mb,2)} MB")
@@ -57,6 +58,7 @@ def main():
             stamp, remaining_mb = usable_batches[idx]
             batch_id = stamp['batchID']
             depth = int(stamp['depth'])
+            bucket_depth = int(stamp['bucketDepth'])
             mutable = not stamp.get("immutable", True)
 
             if batch_id in local_feeds:
@@ -76,33 +78,41 @@ def main():
             content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
 
             if file_mb > remaining_mb:
-                new_depth = depth + 1
-                price_per_block = get_price_per_block()
-                _, add_plur, add_xbzz = calculate_required_plur(new_depth, price_per_block)
-                print(f"\n⚠️ Not enough space. Need: {round(file_mb, 2)} MB | Remaining: {round(remaining_mb, 2)} MB")
-                print(f"Cost to increase capacity: {add_xbzz:.6f} xBZZ")
+                if depth < 31:
+                    new_depth = depth + 1
+                    price_per_block = get_price_per_block()
+                    _, add_plur, add_xbzz = calculate_required_plur(new_depth, price_per_block)
+                    print(f"\n⚠️ Not enough space. Need: {round(file_mb, 2)} MB | Remaining: {round(remaining_mb, 2)} MB")
+                    print(f"Cost to increase capacity: {add_xbzz:.6f} xBZZ")
 
-                if wallet_balance < add_xbzz:
-                    print("❌ Not enough xBZZ to increase storage.")
+                    if wallet_balance < add_xbzz:
+                        print("❌ Not enough xBZZ to increase storage.")
+                        return
+
+                    if input("Increase storage? (yes/no): ").strip().lower() != 'yes':
+                        return
+
+                    if not dilute_batch(batch_id, depth, new_depth):
+                        print("❌ Failed to increase storage.")
+                        return
+
+                    print("✅ Storage capacity successfully increased.")
+                else:
+                    print("⚠️ Batch is already at maximum capacity (depth == 31). Cannot dilute further.")
                     return
-
-                if input("Increase storage? (yes/no): ").strip().lower() != 'yes':
-                    return
-
-                if not dilute_batch(batch_id, depth, new_depth, price_per_block):
-                    print("❌ Failed to increase storage.")
-                    return
-
-                print("✅ Storage capacity successfully increased and TTL aligned.")
-
 
             encrypt = input("Should the file be encrypted? (yes/no): ").strip().lower() == 'yes'
             immutable = not mutable or input("Should the file be immutable? (yes/no): ").strip().lower() != 'no'
             wait_for_stamp_usable(batch_id)
-            swarm_hash = upload_file(file_path, batch_id, encrypt, file_name)
+            swarm_hash = upload_file(file_path, batch_id, encrypt, file_name if mutable else None)
             if swarm_hash:
                 print(f"\nℹ️ File name: {file_name}")
                 print(f"ℹ️ Swarm hash: {swarm_hash}")
+                if mutable:
+                    print("\n✅ Your file was uploaded using a Swarm Feed:")
+                    print(f"   - Feed Name: {file_name}")
+                    print(f"   - Postage Batch ID: {batch_id}")
+                    print("   - This feed allows future updates to the file content.")
                 if input("Would you like to save this file and hash locally? (yes/no): ").strip().lower() == "yes":
                     save_local_feed(batch_id, file_name, swarm_hash)
                 else:
@@ -116,10 +126,10 @@ def main():
     file_mb = Decimal(file_size) / (1024 ** 2)
     depth = calculate_required_depth(file_size)
     price = get_price_per_block()
-    _, plur_cost, xbzz_cost = calculate_required_plur(depth, price)
+    amount_per_chunk, plur_cost, xbzz_cost = calculate_required_plur(depth, price)
 
     print(f"\nFile size: {round(file_mb,2)} MB")
-    print(f"Estimated cost (1 year storage): {xbzz_cost:.6f} xBZZ")
+    print(f"Estimated cost ({STORAGE_TIME_SECONDS / 86400:.0f} day storage): {xbzz_cost:.6f} xBZZ")
 
     if wallet_balance < xbzz_cost:
         print("❌ Not enough xBZZ to purchase new batch.")
@@ -127,7 +137,8 @@ def main():
 
     mutable = input("Should this batch allow file updates? (yes/no): ").strip().lower() == 'yes'
     label = input("Enter label for new batch: ")
-    batch_id = purchase_postage_stamp(plur_cost, depth, label, mutable)
+    amount = int(amount_per_chunk)
+    batch_id = purchase_postage_stamp(amount, depth, label, mutable, quoted_xbzz=xbzz_cost)
     if not batch_id:
         print("❌ Failed to create new batch.")
         return
@@ -136,15 +147,19 @@ def main():
     encrypt = input("Should the file be encrypted? (yes/no): ").strip().lower() == 'yes'
     immutable = not mutable or input("Should the file be immutable? (yes/no): ").strip().lower() != 'no'
     wait_for_stamp_usable(batch_id)
-    swarm_hash = upload_file(file_path, batch_id, mimetypes.guess_type(file_path)[0] or "application/octet-stream", encrypt, file_name)
+    swarm_hash = upload_file(file_path, batch_id, encrypt, file_name if mutable else None)
     if swarm_hash:
         print(f"\nℹ️ File name: {file_name}")
         print(f"ℹ️ Swarm hash: {swarm_hash}")
+        if mutable:
+            print("\n✅ Your file was uploaded using a Swarm Feed:")
+            print(f"   - Feed Name: {file_name}")
+            print(f"   - Postage Batch ID: {batch_id}")
+            print("   - This feed allows future updates to the file content.")
         if input("Would you like to save this file and hash locally? (yes/no): ").strip().lower() == "yes":
             save_local_feed(batch_id, file_name, swarm_hash)
         else:
             print("⚠️ Be sure to note your file name and Swarm hash.")
-
 
 if __name__ == "__main__":
     main()

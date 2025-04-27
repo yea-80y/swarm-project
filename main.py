@@ -42,7 +42,6 @@ def main():
         for i, stamp in enumerate(stamps):
             if stamp.get("usable", False):
                 depth = int(stamp["depth"])
-                bucket_depth = int(stamp["bucketDepth"])
                 utilization = Decimal(stamp.get("utilization", 0))
                 effective_mb = get_effective_capacity_mb(depth)
                 remaining_mb = effective_mb * (1 - utilization)
@@ -55,10 +54,9 @@ def main():
             idx = 0
             if len(usable_batches) > 1:
                 idx = int(input("Select batch number: ")) - 1
-            stamp, remaining_mb = usable_batches[idx]
+            stamp, _ = usable_batches[idx]
             batch_id = stamp['batchID']
             depth = int(stamp['depth'])
-            bucket_depth = int(stamp['bucketDepth'])
             mutable = not stamp.get("immutable", True)
 
             if batch_id in local_feeds:
@@ -75,36 +73,14 @@ def main():
             file_path = input("Enter file path to upload: ").strip()
             file_size = os.path.getsize(file_path)
             file_mb = Decimal(file_size) / (1024 ** 2)
-            content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
-
-            if file_mb > remaining_mb:
-                if depth < 31:
-                    new_depth = depth + 1
-                    price_per_block = get_price_per_block()
-                    _, add_plur, add_xbzz = calculate_required_plur(new_depth, price_per_block)
-                    print(f"\n⚠️ Not enough space. Need: {round(file_mb, 2)} MB | Remaining: {round(remaining_mb, 2)} MB")
-                    print(f"Cost to increase capacity: {add_xbzz:.6f} xBZZ")
-
-                    if wallet_balance < add_xbzz:
-                        print("❌ Not enough xBZZ to increase storage.")
-                        return
-
-                    if input("Increase storage? (yes/no): ").strip().lower() != 'yes':
-                        return
-
-                    if not dilute_batch(batch_id, depth, new_depth):
-                        print("❌ Failed to increase storage.")
-                        return
-
-                    print("✅ Storage capacity successfully increased.")
-                else:
-                    print("⚠️ Batch is already at maximum capacity (depth == 31). Cannot dilute further.")
-                    return
 
             encrypt = input("Should the file be encrypted? (yes/no): ").strip().lower() == 'yes'
             immutable = not mutable or input("Should the file be immutable? (yes/no): ").strip().lower() != 'no'
             wait_for_stamp_usable(batch_id)
+
+            print("\nAttempting upload...")
             swarm_hash = upload_file(file_path, batch_id, encrypt, file_name if mutable else None)
+
             if swarm_hash:
                 print(f"\nℹ️ File name: {file_name}")
                 print(f"ℹ️ Swarm hash: {swarm_hash}")
@@ -117,6 +93,37 @@ def main():
                     save_local_feed(batch_id, file_name, swarm_hash)
                 else:
                     print("⚠️ Be sure to note your file name and Swarm hash.")
+                return
+            else:
+                print("\n⚠️ Upload failed, possibly due to full batch.")
+
+                if depth < 31:
+                    new_depth = depth + 1
+                    price_per_block = get_price_per_block()
+                    _, add_plur, add_xbzz = calculate_required_plur(new_depth, price_per_block)
+                    print(f"\nCost to increase capacity: {add_xbzz:.6f} xBZZ")
+
+                    if wallet_balance < add_xbzz:
+                        print("❌ Not enough xBZZ to increase storage.")
+                        return
+
+                    if input("Increase storage (dilute batch)? (yes/no): ").strip().lower() != 'yes':
+                        return
+
+                    if not dilute_batch(batch_id, depth, new_depth):
+                        print("❌ Failed to increase storage.")
+                        return
+
+                    print("✅ Storage capacity successfully increased. Retry upload.")
+                    swarm_hash = upload_file(file_path, batch_id, encrypt, file_name if mutable else None)
+
+                    if swarm_hash:
+                        print(f"\nℹ️ File name: {file_name}")
+                        print(f"ℹ️ Swarm hash: {swarm_hash}")
+                        if input("Would you like to save this file and hash locally? (yes/no): ").strip().lower() == "yes":
+                            save_local_feed(batch_id, file_name, swarm_hash)
+                else:
+                    print("⚠️ Batch is already at maximum capacity (depth == 31). Cannot dilute further.")
             return
 
     # --- New Batch Upload Path ---
